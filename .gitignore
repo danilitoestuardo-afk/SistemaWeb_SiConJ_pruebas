@@ -1,0 +1,26 @@
+# Dependencias y compilación del frontend
+node_modules/
+dist/
+
+# Compilación de .NET
+bin/
+obj/
+
+# Configuración local y secretos
+.env
+.env.*
+!.env.example
+secrets.json
+appsettings.Local.json
+appsettings.*.Local.json
+
+# Archivos del editor
+.vs/
+.vscode/
+*.user
+*.suo
+
+# Registros y sistema operativo
+*.log
+.DS_Store
+Thumbs.db
