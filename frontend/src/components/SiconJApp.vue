@@ -442,7 +442,11 @@ onUnmounted(() => clearInterval(temporizador))
       <div class="marca">
         <!-- Cuando tengas el logo: copia logo.png a la carpeta "public" y reemplaza el recuadro por
              <img src="./logo.png" alt="SiConJ" class="logo-img" /> -->
-        <div class="logo-ph" role="img" aria-label="Aquí va el logo">Aquí va el logo</div>
+        <img
+  src="/logo-siconj.jpg"
+  alt="Logo de SiConJ: piezas con historia"
+  class="logo-img"
+/>
         <div class="nombre">
           <strong>SiConJ</strong>
           <small>Coleccionables de familia</small>
@@ -799,7 +803,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .barra { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; padding: 14px 24px; background: #fff; border-bottom: 4px solid var(--azul); position: sticky; top: 0; z-index: 5; }
 .marca { display: flex; align-items: center; gap: 14px; }
 .logo-ph { width: 92px; height: 56px; border: 2px dashed var(--azul); border-radius: 12px; display: grid; place-items: center; text-align: center; font-size: .72rem; line-height: 1.15; color: var(--azul); background: var(--cielo); padding: 4px; box-sizing: border-box; }
-.logo-img { height: 56px; }
+.logo-img {
+  width: 90px;
+  height: 90px;
+  object-fit: cover;
+  object-position: center;
+  flex-shrink: 0;
+}
 .nombre { display: flex; flex-direction: column; }
 .nombre strong { font-size: 1.6rem; color: var(--azul); line-height: 1; }
 .nombre small { color: var(--suave); }
