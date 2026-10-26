@@ -8,10 +8,10 @@
 <script setup>
 import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import MapaEntrega from './MapaEntrega.vue'
+import FotoEditor from './FotoEditor.vue'
 
 const API = (import.meta.env.VITE_API_URL || 'http://localhost:5000').replace(/\/$/, '')
 const WHATSAPP = (import.meta.env.VITE_WHATSAPP || '').replace(/\D/g, '')
-const MAX_FOTO = 3 * 1024 * 1024
 
 /* ============ Formatos ============ */
 const DIAS = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado']
@@ -405,6 +405,17 @@ async function copiar(texto, mensajeOk = 'Copiado.') {
 
 /* ============ Administrador: productos ============ */
 const modalProducto = ref(false)
+const fotoPendiente = ref(null)
+const resumenFoto = ref('')
+const pesoFoto = b => b >= 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.round(b / 1024)} KB`
+function limpiarFoto() {
+  if (form.previa) URL.revokeObjectURL(form.previa)
+  form.previa = ''
+  form.archivo = null
+  fotoPendiente.value = null
+  resumenFoto.value = ''
+}
+watch(modalProducto, abierto => { if (!abierto) limpiarFoto() })
 const guardando = ref(false)
 const intentado = ref(false)
 const form = reactive({
@@ -413,6 +424,7 @@ const form = reactive({
 })
 
 function nuevo() {
+  limpiarFoto()
   Object.assign(form, {
     id: 0, nombre: '', descripcion: '', categoriaId: categorias.value[0]?.id || 0,
     condicionId: condiciones.value[0]?.id || 0, precio: null, stock: 1, notas: '',
@@ -422,6 +434,7 @@ function nuevo() {
   modalProducto.value = true
 }
 function editar(p) {
+  limpiarFoto()
   Object.assign(form, {
     id: p.id, nombre: p.nombre, descripcion: p.descripcion, categoriaId: p.categoriaId,
     condicionId: p.condicionId, precio: p.precio, stock: p.stock, notas: p.notasCondicion || '',
@@ -432,12 +445,20 @@ function editar(p) {
 }
 function onFoto(e) {
   const f = e.target.files?.[0]
+  e.target.value = '' // Permite volver a elegir la misma foto tras cancelar.
   if (!f) return
-  if (!['image/jpeg', 'image/png', 'image/webp'].includes(f.type)) { avisar('Usa una foto JPG, PNG o WEBP.', 'err'); e.target.value = ''; return }
-  if (f.size > MAX_FOTO) { avisar('La foto no debe pasar de 3 MB.', 'err'); e.target.value = ''; return }
+  if (!['image/jpeg', 'image/png', 'image/webp'].includes(f.type)) {
+    avisar('Usa una foto JPG, PNG o WEBP.', 'err'); return
+  }
+  // Sin el antiguo límite de 3 MB para el original: el editor prepara una copia pequeña.
+  fotoPendiente.value = f
+}
+function aceptarFoto({ archivo, original }) {
   if (form.previa) URL.revokeObjectURL(form.previa)
-  form.archivo = f
-  form.previa = URL.createObjectURL(f)
+  form.archivo = archivo
+  form.previa = URL.createObjectURL(archivo)
+  resumenFoto.value = `Foto lista: ${pesoFoto(original)} → ${pesoFoto(archivo.size)}.`
+  fotoPendiente.value = null
 }
 const errores = computed(() => {
   const e = {}
@@ -452,7 +473,7 @@ const fotoForm = computed(() => form.previa || (form.imagenActual ? API + form.i
 
 async function guardarProducto() {
   intentado.value = true
-  if (Object.keys(errores.value).length) return
+  if (Object.keys(errores.value).length || fotoPendiente.value || guardando.value) return
   guardando.value = true
   try {
     const fd = new FormData()
@@ -633,7 +654,7 @@ onMounted(() => {
     if (esAdmin.value) cargarPedidos(true)
   }, 20000)
 })
-onUnmounted(() => clearInterval(temporizador))
+onUnmounted(() => { clearInterval(temporizador); limpiarFoto() })
 </script>
 
 <template>
@@ -1051,8 +1072,9 @@ onUnmounted(() => clearInterval(temporizador))
           <div>
             <label>Foto del producto
               <input type="file" accept="image/jpeg,image/png,image/webp" @change="onFoto" />
-              <small>JPG, PNG o WEBP, hasta 3 MB.</small>
+              <small>JPG, PNG o WEBP. Puedes elegir una foto grande: se ajustará antes de subirla.</small>
             </label>
+            <p v-if="resumenFoto" role="status">{{ resumenFoto }}</p>
             <div class="vista-previa">
               <img v-if="fotoForm" :src="fotoForm" alt="Vista previa de la foto" />
               <span v-else>La foto aparecerá aquí</span>
@@ -1066,6 +1088,9 @@ onUnmounted(() => clearInterval(temporizador))
         </div>
       </form>
     </div>
+
+    <FotoEditor v-if="fotoPendiente && modalProducto" :archivo="fotoPendiente"
+      @listo="aceptarFoto" @cerrar="fotoPendiente = null" />
 
     <!-- ================= Confirmación Sí / No ================= -->
     <div v-if="confirma.abierto" class="velo centro" @click.self="!confirma.trabajando && (confirma.abierto = false)">
