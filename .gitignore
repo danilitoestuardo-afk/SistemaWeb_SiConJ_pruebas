@@ -24,3 +24,6 @@ appsettings.*.Local.json
 *.log
 .DS_Store
 Thumbs.db
+# Paquetes locales de despliegue
+*.zip
+!.env.production.example

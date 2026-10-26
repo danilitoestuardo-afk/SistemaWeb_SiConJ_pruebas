@@ -17,20 +17,20 @@ public class Seguridad
 
     public Seguridad(IConfiguration cfg) => _llave = Encoding.UTF8.GetBytes(cfg["Jwt:Key"]!);
 
-    /// <summary>Las claves de cliente se generan al azar (60 bits), así que basta un hash HMAC
-    /// determinista: permite buscar al cliente por su clave sin guardarla.</summary>
+    /// <summary>Las claves de cliente se generan al azar, así que basta un hash HMAC determinista:
+    /// permite buscar al cliente por su clave sin guardarla.</summary>
     public string HashClaveCliente(string clave) =>
         Convert.ToHexString(HMACSHA256.HashData(_llave, Encoding.UTF8.GetBytes(Normalizar(clave))));
 
-    public static string Normalizar(string clave) => clave.Replace(" ", "").ToUpperInvariant();
+    /// <summary>Acepta minúsculas, espacios y guiones: "ab3 k9x" y "AB3-K9X" son la misma clave.</summary>
+    public static string Normalizar(string clave) => clave.Replace(" ", "").Replace("-", "").ToUpperInvariant();
 
-    /// <summary>Formato: SJ-XXXX-XXXX-XXXX</summary>
+    /// <summary>6 caracteres, solo mayúsculas y números (sin O, 0, I, 1 para no confundirlos). Ej: K7M2QX</summary>
     public string NuevaClaveCliente()
     {
-        var c = new char[12];
+        var c = new char[6];
         for (int i = 0; i < c.Length; i++) c[i] = Alfabeto[RandomNumberGenerator.GetInt32(Alfabeto.Length)];
-        var s = new string(c);
-        return $"SJ-{s[..4]}-{s[4..8]}-{s[8..]}";
+        return new string(c);
     }
 
     public string CrearToken(IEnumerable<Claim> claims, TimeSpan vida, out DateTime expira)

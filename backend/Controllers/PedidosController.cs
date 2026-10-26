@@ -1,11 +1,14 @@
 // Controllers/PedidosController.cs
-// Cliente: registra su pedido (se descuenta el stock al instante, así nadie más lo compra).
-// Admin: ve todos los pedidos en vivo y los marca como Completado o Cancelado.
+// Cliente: registra su pedido eligiendo cómo lo recibe (recoger en la tienda aliada o a domicilio).
+//          El stock se descuenta al instante, así nadie más compra esa pieza.
+// Admin:   ve todos los pedidos con sus datos de entrega y los marca como Completado o Cancelado.
+using System.Globalization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using SiconJ.Api.Data;
 using SiconJ.Api.Models;
+using SiconJ.Api.Services;
 
 namespace SiconJ.Api.Controllers;
 
@@ -13,8 +16,17 @@ namespace SiconJ.Api.Controllers;
 [Route("api/pedidos")]
 public class PedidosController : ControllerBase
 {
+    private const string FormatoHora = @"hh\:mm";
     private readonly SiconJDb _db;
-    public PedidosController(SiconJDb db) => _db = db;
+    private readonly ICorreo _correo;
+    private readonly ILogger<PedidosController> _log;
+
+    public PedidosController(SiconJDb db, ICorreo correo, ILogger<PedidosController> log)
+    {
+        _db = db;
+        _correo = correo;
+        _log = log;
+    }
 
     // ---------- CLIENTE ----------
 
@@ -23,6 +35,11 @@ public class PedidosController : ControllerBase
     {
         if (!int.TryParse(User.FindFirst("cid")?.Value, out var clienteId)) return Unauthorized();
         if (!await _db.Clientes.AnyAsync(c => c.Id == clienteId)) return Unauthorized();
+
+        // La forma de entrega es obligatoria y se valida ANTES de tocar el stock.
+        var (errorEntrega, fecha, franja) = await ValidarEntrega(req);
+        if (errorEntrega is not null) return BadRequest(new { mensaje = errorEntrega });
+        var domicilio = req.TipoEntrega == TipoEntrega.Domicilio;
 
         // Si una pieza viene repetida, se suman las cantidades.
         var items = req.Items.GroupBy(i => i.InstanciaId)
@@ -37,10 +54,10 @@ public class PedidosController : ControllerBase
             var id = item.Id;
             var cant = item.Cant;
 
-            // Descuento atómico: solo se aplica si sigue Disponible y alcanza el stock.
+            // Descuento atómico: solo se aplica si sigue Disponible, visible y alcanza el stock.
             // Dos clientes pidiendo la última pieza a la vez: uno gana y el otro recibe el aviso.
             var filas = await _db.Instancias
-                .Where(i => i.Id == id && i.EstadoId == EstadoInv.Disponible && i.Stock >= cant)
+                .Where(i => i.Id == id && !i.Oculto && i.EstadoId == EstadoInv.Disponible && i.Stock >= cant)
                 .ExecuteUpdateAsync(s => s.SetProperty(i => i.Stock, i => i.Stock - cant));
             if (filas == 0)
             {
@@ -63,11 +80,18 @@ public class PedidosController : ControllerBase
             Nota = string.IsNullOrWhiteSpace(req.Nota) ? null : req.Nota.Trim(),
             Total = total,
             Detalles = detalles,
+            TipoEntrega = req.TipoEntrega,
+            Direccion = domicilio ? req.Direccion!.Trim() : null,
+            Latitud = domicilio && req.Latitud.HasValue ? Math.Round(req.Latitud.Value, 6) : null,
+            Longitud = domicilio && req.Longitud.HasValue ? Math.Round(req.Longitud.Value, 6) : null,
+            EntregaFecha = domicilio ? fecha : null,
+            EntregaFranja = domicilio ? franja : null,
         };
         _db.Pedidos.Add(pedido);
         await _db.SaveChangesAsync();
         await tx.CommitAsync();
 
+        await AvisarAlAdmin(pedido, clienteId, detalles);
         return Ok(new { id = pedido.Id, total });
     }
 
@@ -86,6 +110,8 @@ public class PedidosController : ControllerBase
         return Ok(lista.Select(p => new PedidoDto(
             p.Id, DateTime.SpecifyKind(p.Creado, DateTimeKind.Utc), p.Estado, p.Total, p.Nota,
             p.Cliente?.Nombre ?? "", p.Cliente?.Correo ?? "",
+            p.TipoEntrega, p.Direccion, p.Latitud, p.Longitud,
+            p.EntregaFecha?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), p.EntregaFranja,
             p.Detalles.Select(d => new DetalleDto(
                 d.InstanciaId, d.Instancia?.Producto?.Nombre ?? "(pieza eliminada)", d.Cantidad, d.PrecioUnitario)).ToList())));
     }
@@ -126,5 +152,68 @@ public class PedidosController : ControllerBase
         await _db.SaveChangesAsync();
         await tx.CommitAsync();
         return NoContent();
+    }
+
+    // ---------- Apoyo ----------
+
+    /// <summary>Recoger no pide nada más. Domicilio exige dirección escrita, fecha y un horario que el admin tenga activo.</summary>
+    private async Task<(string? Error, DateTime? Fecha, string? Franja)> ValidarEntrega(PedidoReq req)
+    {
+        if (req.TipoEntrega == TipoEntrega.Recoger) return (null, null, null);
+        if (req.TipoEntrega != TipoEntrega.Domicilio)
+            return ("Elige cómo quieres recibir tu pedido: recoger o a domicilio.", null, null);
+
+        if (string.IsNullOrWhiteSpace(req.Direccion) || req.Direccion.Trim().Length < 6)
+            return ("Escribe la dirección donde quieres recibir tu pedido.", null, null);
+
+        if (req.Latitud.HasValue != req.Longitud.HasValue ||
+            (req.Latitud is { } la && (la < -90 || la > 90)) ||
+            (req.Longitud is { } lo && (lo < -180 || lo > 180)))
+            return ("La ubicación del mapa no es válida. Vuelve a marcarla.", null, null);
+
+        if (!DateTime.TryParseExact(req.Fecha, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var fecha))
+            return ("Elige el día de entrega.", null, null);
+
+        var ahora = DateTime.UtcNow.AddHours(-6); // hora de Guatemala (no usa horario de verano)
+        if (fecha < ahora.Date || fecha > ahora.Date.AddDays(30))
+            return ("El día de entrega no es válido.", null, null);
+
+        var partes = (req.Franja ?? "").Split('-');
+        if (partes.Length != 2 ||
+            !TimeSpan.TryParseExact(partes[0], FormatoHora, CultureInfo.InvariantCulture, out var ini) ||
+            !TimeSpan.TryParseExact(partes[1], FormatoHora, CultureInfo.InvariantCulture, out var fin))
+            return ("Elige el horario de entrega.", null, null);
+
+        var dia = (int)fecha.DayOfWeek; // 0 = domingo, igual que en HORARIO_ENTREGA
+        var existe = await _db.Horarios.AnyAsync(h => h.Activo && h.DiaSemana == dia && h.HoraInicio == ini && h.HoraFin == fin);
+        if (!existe) return ("Ese horario ya no está disponible. Elige otro.", null, null);
+        if (fecha == ahora.Date && fin <= ahora.TimeOfDay) return ("Ese horario de hoy ya pasó. Elige otro.", null, null);
+
+        return (null, fecha, ini.ToString(FormatoHora) + "-" + fin.ToString(FormatoHora));
+    }
+
+    /// <summary>Correo al administrador con el pedido nuevo. Si falla, el pedido ya está guardado: solo se registra en el log.</summary>
+    private async Task AvisarAlAdmin(Pedido pedido, int clienteId, List<PedidoDetalle> detalles)
+    {
+        if (!_correo.Activo || string.IsNullOrWhiteSpace(_correo.CorreoAdmin)) return;
+        try
+        {
+            var cliente = await _db.Clientes.AsNoTracking().FirstAsync(c => c.Id == clienteId);
+            var ids = detalles.Select(d => d.InstanciaId).ToList();
+            var nombres = await _db.Instancias.AsNoTracking().Where(i => ids.Contains(i.Id))
+                .Select(i => new { i.Id, Nombre = i.Producto!.Nombre })
+                .ToDictionaryAsync(x => x.Id, x => x.Nombre);
+
+            var lineas = detalles
+                .Select(d => (nombres.GetValueOrDefault(d.InstanciaId, "Pieza"), d.Cantidad, d.PrecioUnitario))
+                .ToList();
+
+            _correo.Enviar(_correo.CorreoAdmin, $"Nuevo pedido #{pedido.Id} de {cliente.Nombre}",
+                PlantillasCorreo.NuevoPedido(pedido, cliente.Nombre, cliente.Correo, lineas));
+        }
+        catch (Exception e)
+        {
+            _log.LogWarning(e, "No se pudo preparar el aviso del pedido {Id}.", pedido.Id);
+        }
     }
 }

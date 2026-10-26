@@ -17,6 +17,8 @@ public class SiconJDb : DbContext
     public DbSet<AdminAcceso> Admin => Set<AdminAcceso>();
     public DbSet<Pedido> Pedidos => Set<Pedido>();
     public DbSet<PedidoDetalle> PedidoDetalles => Set<PedidoDetalle>();
+    public DbSet<Ajuste> Ajustes => Set<Ajuste>();
+    public DbSet<HorarioEntrega> Horarios => Set<HorarioEntrega>();
 
     protected override void OnModelCreating(ModelBuilder mb)
     {

@@ -24,12 +24,15 @@ public class ProductosController : ControllerBase
 
     // ---------- PÚBLICO ----------
 
-    /// <summary>GET api/productos?categoriaId=&amp;q=&amp;soloDisponibles=</summary>
+    /// <summary>GET api/productos?categoriaId=&amp;q=&amp;soloDisponibles=&amp;incluirOcultos=
+    /// Las piezas ocultas solo las ve el administrador (si manda su sesión y pide incluirOcultos).</summary>
     [HttpGet]
     public async Task<List<ProductoDto>> Listar(
-        [FromQuery] int categoriaId = 0, [FromQuery] string? q = null, [FromQuery] bool soloDisponibles = false)
+        [FromQuery] int categoriaId = 0, [FromQuery] string? q = null, [FromQuery] bool soloDisponibles = false,
+        [FromQuery] bool incluirOcultos = false)
     {
         var query = ConDatos().AsNoTracking();
+        if (!(incluirOcultos && User.IsInRole("Admin"))) query = query.Where(i => !i.Oculto);
         if (categoriaId > 0) query = query.Where(i => i.Producto!.CategoriaId == categoriaId);
         if (!string.IsNullOrWhiteSpace(q))
         {
@@ -138,7 +141,11 @@ public class ProductosController : ControllerBase
         if (unidad is null) return NotFound();
 
         if (await _db.PedidoDetalles.AnyAsync(d => d.InstanciaId == id))
-            return Conflict(new { mensaje = "Esta pieza ya tiene pedidos registrados y no se puede eliminar. Déjala con stock 0 para que aparezca como agotada." });
+            return Conflict(new
+            {
+                mensaje = "Esta pieza ya tiene pedidos registrados, por eso no se puede eliminar (se perdería el historial). Puedes ocultarla del catálogo.",
+                puedeOcultar = true,
+            });
 
         var producto = unidad.Producto!;
         var vieja = IdImagen(producto.ImagenBase);
@@ -152,6 +159,15 @@ public class ProductosController : ControllerBase
         return NoContent();
     }
 
+    /// <summary>Oculta la pieza del catálogo (o la vuelve a mostrar) sin borrar su historial de pedidos.</summary>
+    [Authorize(Roles = "Admin"), HttpPost("{id:int}/ocultar")]
+    public async Task<IActionResult> Ocultar(int id, [FromQuery] bool oculto = true)
+    {
+        var filas = await _db.Instancias.Where(i => i.Id == id)
+            .ExecuteUpdateAsync(s => s.SetProperty(i => i.Oculto, oculto));
+        return filas == 0 ? NotFound() : NoContent();
+    }
+
     // ---------- Apoyo ----------
 
     internal static ProductoDto ToDto(Instancia i)
@@ -162,7 +178,7 @@ public class ProductosController : ControllerBase
             i.Id, p.Nombre, p.Descripcion ?? "",
             p.CategoriaId, p.Categoria?.Nombre ?? "",
             i.CondicionId, i.Condicion?.Nombre ?? "", i.NotasCondicion,
-            i.Precio, i.Stock, i.EstadoId == EstadoInv.Disponible && i.Stock > 0, imagen);
+            i.Precio, i.Stock, i.EstadoId == EstadoInv.Disponible && i.Stock > 0 && !i.Oculto, i.Oculto, imagen);
     }
 
     private async Task<string?> ValidarReferencias(ProductoForm f)

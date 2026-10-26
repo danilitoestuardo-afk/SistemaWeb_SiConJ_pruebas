@@ -79,6 +79,15 @@ var origenes = (cfg["Cors:Origins"] ?? "http://localhost:5173")
     .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 builder.Services.AddCors(o => o.AddPolicy("web", p => p.WithOrigins(origenes).AllowAnyHeader().AllowAnyMethod()));
 
+// Gmail se habilita explícitamente y solo en Development para las pruebas locales.
+// Los demás entornos conservan el envío HTTPS mediante cPanel.
+builder.Services.AddHttpClient();
+if (builder.Environment.IsDevelopment() &&
+    string.Equals(cfg["Correo:Modo"], "Gmail", StringComparison.OrdinalIgnoreCase))
+    builder.Services.AddSingleton<ICorreo, CorreoGmail>();
+else
+    builder.Services.AddSingleton<ICorreo, CorreoRelay>();
+
 builder.Services.AddControllers();
 
 var app = builder.Build();

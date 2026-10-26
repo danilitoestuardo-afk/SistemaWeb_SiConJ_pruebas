@@ -21,7 +21,8 @@ public class AccesoController : ControllerBase
 {
     private readonly SiconJDb _db;
     private readonly Seguridad _seg;
-    public AccesoController(SiconJDb db, Seguridad seg) { _db = db; _seg = seg; }
+    private readonly ICorreo _correo;
+    public AccesoController(SiconJDb db, Seguridad seg, ICorreo correo) { _db = db; _seg = seg; _correo = correo; }
 
     [HttpPost, EnableRateLimiting("acceso")]
     public async Task<IActionResult> Entrar([FromBody] ClaveReq req)
@@ -95,7 +96,34 @@ public class AccesoController : ControllerBase
         try { await _db.SaveChangesAsync(); }
         catch (DbUpdateException) { return Conflict(new { mensaje = "No se pudo crear la cuenta. Intenta de nuevo." }); }
 
-        return Ok(new RegistroResp(clave, TokenCliente(cliente)));
+        // La clave también le llega por correo (si el envío de correos está activado).
+        _correo.Enviar(cliente.Correo, "Tu clave de SiConJ", PlantillasCorreo.Clave(cliente.Nombre, clave));
+        return Ok(new RegistroResp(clave, TokenCliente(cliente), _correo.Activo));
+    }
+
+    /// <summary>"Olvidé mi clave": genera una clave nueva (la anterior deja de servir) y la manda al correo.
+    /// Siempre responde lo mismo, exista o no el correo, para no revelar quién tiene cuenta.</summary>
+    [HttpPost("recuperar"), EnableRateLimiting("acceso")]
+    public async Task<IActionResult> Recuperar([FromBody] RecuperarReq req)
+    {
+        if (!_correo.Activo)
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                new { mensaje = "El envío de correos aún no está activado. Pide tu clave nueva al administrador." });
+
+        var correo = req.Correo.Trim().ToLowerInvariant();
+        var cliente = await _db.Clientes.FirstOrDefaultAsync(c => c.Correo == correo);
+        if (cliente is not null)
+        {
+            var clave = _seg.NuevaClaveCliente();
+            cliente.ClaveHash = _seg.HashClaveCliente(clave);
+            try
+            {
+                await _db.SaveChangesAsync();
+                _correo.Enviar(cliente.Correo, "Tu clave nueva de SiConJ", PlantillasCorreo.Clave(cliente.Nombre, clave));
+            }
+            catch (DbUpdateException) { /* choque improbable de claves: la persona puede volver a pedirla */ }
+        }
+        return Ok(new { mensaje = "Si ese correo está registrado, te enviamos una clave nueva." });
     }
 
     private AccesoResp TokenCliente(Cliente c)

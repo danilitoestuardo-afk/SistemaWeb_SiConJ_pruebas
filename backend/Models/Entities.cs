@@ -19,6 +19,12 @@ public static class EstadoPedido
     public const string Cancelado = "Cancelado";
 }
 
+public static class TipoEntrega
+{
+    public const string Recoger = "Recoger";       // en la tienda aliada
+    public const string Domicilio = "Domicilio";   // en la dirección que indique el cliente
+}
+
 [Table("CATEGORIA")]
 public class Categoria
 {
@@ -63,6 +69,7 @@ public class Instancia
     [Column("precio_venta", TypeName = "decimal(10,2)")] public decimal Precio { get; set; }
     [Column("cantidad_stock")] public int Stock { get; set; }
     [Column("notas_condicion")] public string? NotasCondicion { get; set; }
+    [Column("oculto")] public bool Oculto { get; set; }
     [Column("fk_producto_catalogo")] public int ProductoId { get; set; }
     public ProductoCatalogo? Producto { get; set; }
     [Column("fk_condicion")] public int CondicionId { get; set; }
@@ -101,6 +108,12 @@ public class Pedido
     [Column("estado")] public string Estado { get; set; } = EstadoPedido.Pendiente;
     [Column("nota")] public string? Nota { get; set; }
     [Column("total", TypeName = "decimal(10,2)")] public decimal Total { get; set; }
+    [Column("tipo_entrega")] public string TipoEntrega { get; set; } = Models.TipoEntrega.Recoger;
+    [Column("direccion")] public string? Direccion { get; set; }
+    [Column("latitud", TypeName = "decimal(9,6)")] public decimal? Latitud { get; set; }
+    [Column("longitud", TypeName = "decimal(9,6)")] public decimal? Longitud { get; set; }
+    [Column("entrega_fecha", TypeName = "date")] public DateTime? EntregaFecha { get; set; }
+    [Column("entrega_franja")] public string? EntregaFranja { get; set; }
     [Column("created_at")] public DateTime Creado { get; set; } = DateTime.UtcNow;
     public List<PedidoDetalle> Detalles { get; set; } = new();
 }
@@ -114,4 +127,23 @@ public class PedidoDetalle
     public Instancia? Instancia { get; set; }
     [Column("cantidad")] public int Cantidad { get; set; }
     [Column("precio_unitario", TypeName = "decimal(10,2)")] public decimal PrecioUnitario { get; set; }
+}
+
+/// <summary>Ajustes sueltos (clave/valor): hoy solo los datos del punto de recogida.</summary>
+[Table("AJUSTE")]
+public class Ajuste
+{
+    [Key, Column("clave")] public string Clave { get; set; } = "";
+    [Column("valor")] public string Valor { get; set; } = "";
+}
+
+/// <summary>Una franja de entrega a domicilio. DiaSemana: 0 = domingo ... 6 = sábado.</summary>
+[Table("HORARIO_ENTREGA")]
+public class HorarioEntrega
+{
+    [Key, Column("id_horario")] public int Id { get; set; }
+    [Column("dia_semana")] public int DiaSemana { get; set; }
+    [Column("hora_inicio")] public TimeSpan HoraInicio { get; set; }
+    [Column("hora_fin")] public TimeSpan HoraFin { get; set; }
+    [Column("activo")] public bool Activo { get; set; } = true;
 }
